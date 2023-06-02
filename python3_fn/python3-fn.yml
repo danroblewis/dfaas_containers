@@ -1,0 +1,10 @@
+version: 1.0
+provider:
+  name: openfaas
+  gateway: http://127.0.0.1:31112
+functions:
+  python3-fn:
+    lang: dockerfile
+    handler: ./python3-fn
+    image: danroblewis/python3-fn:latest
+
