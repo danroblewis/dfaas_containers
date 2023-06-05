@@ -2,11 +2,11 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: dfaas-python3-deployment
+  name: dfaas-python3-deployment-writer
   labels:
     app: dfaas-python3
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: dfaas-python3
@@ -18,9 +18,60 @@ spec:
       containers:
       - name: dfaas-python3-deployment
         image: danroblewis/dfaas-container-python3
-        imagePullPolicy: IfNotPresent
+        imagePullPolicy: Always
         ports:
         - containerPort: 3000
+        env:
+        - name: MONGODB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: my-mongodb
+              key: mongodb-root-password
+        - name: FUNCTION_NAME
+          value: "write_test_topic"
+        - name: MONGODB_HOST
+          value: "my-mongodb.default.svc.cluster.local"
+        - name: MONGODB_PORT
+          value: 27017
+        - name: MONGODB_USER
+          value: "root"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dfaas-python3-deployment-reader
+  labels:
+    app: dfaas-python3
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dfaas-python3
+  template:
+    metadata:
+      labels:
+        app: dfaas-python3
+    spec:
+      containers:
+      - name: dfaas-python3-deployment
+        image: danroblewis/dfaas-container-python3
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 3000
+        env:
+        - name: MONGODB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: my-mongodb
+              key: mongodb-root-password
+        - name: FUNCTION_NAME
+          value: "read_test_topic"
+        - name: MONGODB_HOST
+          value: "my-mongodb.default.svc.cluster.local"
+        - name: MONGODB_PORT
+          value: 27017
+        - name: MONGODB_USER
+          value: "root"
 ---
 apiVersion: v1
 # Indicates this as a service

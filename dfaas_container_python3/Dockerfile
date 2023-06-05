@@ -6,7 +6,7 @@ RUN python3 -m ensurepip
 RUN pip3 install --no-cache --upgrade pip setuptools
 RUN pip3 install requests
 RUN pip3 install kafka-python
-RUN pip3 install mongo
+RUN pip3 install pymongo
 
 RUN mkdir -p /home/app
 
