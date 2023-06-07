@@ -32,14 +32,20 @@ spec:
         - name: MONGODB_HOST
           value: "my-mongodb.default.svc.cluster.local"
         - name: MONGODB_PORT
-          value: 27017
+          value: "27017"
         - name: MONGODB_USER
           value: "root"
+        - name: KAFKA_ADDRESS
+          value: "my-kafka.default.svc.cluster.local:9092"
+        - name: TIMER
+          value: "30"
+        - name: OUTPUT_TOPIC
+          value: "test2"
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: dfaas-python3-deployment-reader
+  name: dfaas-python3-print-msg
   labels:
     app: dfaas-python3
 spec:
@@ -69,9 +75,13 @@ spec:
         - name: MONGODB_HOST
           value: "my-mongodb.default.svc.cluster.local"
         - name: MONGODB_PORT
-          value: 27017
+          value: "27017"
         - name: MONGODB_USER
           value: "root"
+        - name: INPUT_TOPIC
+          value: "test2"
+        - name: KAFKA_ADDRESS
+          value: "my-kafka.default.svc.cluster.local:9092"
 ---
 apiVersion: v1
 # Indicates this as a service
