@@ -2,6 +2,48 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+  name: dfaas-change-stuff
+  labels:
+    app: dfaas-python3
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dfaas-python3
+  template:
+    metadata:
+      labels:
+        app: dfaas-python3
+    spec:
+      containers:
+      - name: dfaas-python3-deployment
+        image: danroblewis/dfaas-container-python3
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 3000
+        env:
+        - name: MONGODB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: my-mongodb
+              key: mongodb-root-password
+        - name: FUNCTION_NAME
+          value: "change_stuff"
+        - name: MONGODB_HOST
+          value: "my-mongodb.default.svc.cluster.local"
+        - name: MONGODB_PORT
+          value: "27017"
+        - name: MONGODB_USER
+          value: "root"
+        - name: INPUT_TOPIC
+          value: "test2"
+        - name: KAFKA_ADDRESS
+          value: "my-kafka-0.my-kafka-headless.default.svc.cluster.local:9092"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
   name: dfaas-python3-deployment-writer
   labels:
     app: dfaas-python3
@@ -36,16 +78,18 @@ spec:
         - name: MONGODB_USER
           value: "root"
         - name: KAFKA_ADDRESS
-          value: "my-kafka.default.svc.cluster.local:9092"
+          value: "my-kafka-0.my-kafka-headless.default.svc.cluster.local:9092"
         - name: TIMER
           value: "30"
         - name: OUTPUT_TOPIC
           value: "test2"
+        - name: OUTPUT_TOPICS
+          value: "test2,test5,test7"
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: dfaas-python3-print-msg
+  name: dfaas-python3-print-rec
   labels:
     app: dfaas-python3
 spec:
@@ -71,7 +115,7 @@ spec:
               name: my-mongodb
               key: mongodb-root-password
         - name: FUNCTION_NAME
-          value: "read_test_topic"
+          value: "print-rec"
         - name: MONGODB_HOST
           value: "my-mongodb.default.svc.cluster.local"
         - name: MONGODB_PORT
@@ -81,7 +125,7 @@ spec:
         - name: INPUT_TOPIC
           value: "test2"
         - name: KAFKA_ADDRESS
-          value: "my-kafka.default.svc.cluster.local:9092"
+          value: "my-kafka-0.my-kafka-headless.default.svc.cluster.local:9092"
 ---
 apiVersion: v1
 # Indicates this as a service
