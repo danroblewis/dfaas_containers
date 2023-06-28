@@ -84,6 +84,7 @@ while True:
             exec(code)
             function = locals()[fname]
 
+    # TODO: not sure how to make this support paramaters. i think the functions need to be called async.
     if "null" in mappings: # this is an output-only function
         if inspect.isgeneratorfunction(function):
             try:
@@ -102,7 +103,7 @@ while True:
                 if 'default' in out and out['default']:
                     print('writing to topic:', out['default'])
                     s = producer.send(out['default'], ret)
-    
+
     #elif :  # this is an input-only function
 
     else: # this is good old fashion input-to-output function
@@ -112,27 +113,25 @@ while True:
         else:
             r = consumer.poll(timeout_ms=100, max_records=201)
             for rr in sum(r.values(), []):
-                t = rr.value.decode('utf-8')
-                if '{' not in t: continue
-                try:
-                    rec = json.loads(t)
-                except:
-                    print('failed to parse', t)
-                try:
-                    ret = function(rec)
-                except Exception as e:
-                    print('error in function', e)
-                    continue
-                if not isinstance(ret, dict):
-                    ret = { "value": ret }
-        
-                topics = mappings[rr.topic]
-                for topicmap in topics:
-                    for out in topicmap['outputs']:
+                applications = mappings[rr.topic]
+                for application in applications:
+                    t = rr.value.decode('utf-8')
+                    if '{' not in t: continue
+                    try:
+                        rec = json.loads(t)
+                    except:
+                        print('failed to parse', t)
+                    try:
+                        ret = function(rec, **application['params'])
+                    except Exception as e:
+                        print('error in function', e)
+                        continue
+                    if not isinstance(ret, dict):
+                        ret = { "value": ret }
+
+                    for out in application['outputs']:
                         if 'default' in out and out['default']:
-                            print('writing to topic:', out['default'])
                             s = producer.send(out['default'], json.dumps(ret).encode())
-        
-    
-    
-    
+
+
+
