@@ -8,6 +8,9 @@ import sys
 import datetime
 import inspect
 import time
+import traceback
+from contextlib import redirect_stdout
+import io
 
 print("\n"*10)
 function = None
@@ -63,6 +66,7 @@ producer = kafka.KafkaProducer(bootstrap_servers=[ os.environ['KAFKA_ADDRESS'] ]
 refresh_interval = 10
 last_refresh = datetime.datetime(1970,1,1)
 code = None
+log_stdout = False
 
 
 
@@ -78,25 +82,44 @@ while True:
             consumer = setup_consumer(consumer, fname, mappings)
 
         fn = functions.find_one({ "name": fname })
+        log_stdout = (now.timestamp() - fn['last_update']) < 10*60 # updated within 10 minutes
         if code != fn['code']:
             print(now, "refreshing function", fname)
             code = fn['code']
-            exec(code)
+            f = io.StringIO()
+            with redirect_stdout(f):
+                exec(code)
+            s = f.getvalue()
+            if log_stdout and len(s) > 0:
+                producer.send(f"{fname}_stdout", json.dumps({ "stdout": s, "tstamp": datetime.datetime.now().timestamp() }).encode())
             function = locals()[fname]
 
     # TODO: not sure how to make this support paramaters. i think the functions need to be called async.
     if "null" in mappings: # this is an output-only function
         if inspect.isgeneratorfunction(function):
-            try:
-                ret = next(function())
-            except Exception as e:
-                print('error in function', e)
+            f = io.StringIO()
+            with redirect_stdout(f):
+                try:
+                    ret = next(function())
+                except Exception as e:
+                    print(traceback.format_exc())
+            s = f.getvalue()
+            if log_stdout and len(s) > 0:
+                producer.send(f"{fname}_stdout", json.dumps({ "stdout": s, "tstamp": datetime.datetime.now().timestamp() }).encode())
         else:
-            try:
-                ret = function()
-            except Exception as e:
-                print('error in function', e)
+            f = io.StringIO()
+            with redirect_stdout(f):
+                try:
+                    ret = function()
+                except Exception as e:
+                    print(traceback.format_exc())
+            s = f.getvalue()
+            if log_stdout and len(s) > 0:
+                producer.send(f"{fname}_stdout", json.dumps({ "stdout": s, "tstamp": datetime.datetime.now().timestamp() }).encode())
         topics = mappings["null"]
+        # do not propogate return values if the value is just None
+        if ret is None:
+            continue
         ret = json.dumps(ret).encode()
         for topic in topics:
             for out in topic['outputs']:
@@ -121,10 +144,31 @@ while True:
                         rec = json.loads(t)
                     except:
                         print('failed to parse', t)
-                    try:
-                        ret = function(rec, **application['params'])
-                    except Exception as e:
-                        print('error in function', e)
+
+                    if fname == 'print_rec':
+                        f = io.StringIO()
+                        with redirect_stdout(f):
+                            try:
+                                ret = function(rec, **application['params'])
+                            except Exception as e:
+                                print(traceback.format_exc())
+                        s = f.getvalue()
+                        print(s)
+                        if log_stdout and len(s) > 0:
+                            producer.send(f"{fname}_stdout", json.dumps({ "stdout": s, "tstamp": datetime.datetime.now().timestamp() }).encode())
+                    else:
+                        f = io.StringIO()
+                        with redirect_stdout(f):
+                            try:
+                                ret = function(rec, **application['params'])
+                            except Exception as e:
+                                print(traceback.format_exc())
+                        s = f.getvalue()
+                        if log_stdout and len(s) > 0:
+                            producer.send(f"{fname}_stdout", json.dumps({ "stdout": s, "tstamp": datetime.datetime.now().timestamp() }).encode())
+
+                    # do not propogate return values if the value is just None
+                    if ret is None:
                         continue
                     if not isinstance(ret, dict):
                         ret = { "value": ret }
@@ -132,6 +176,5 @@ while True:
                     for out in application['outputs']:
                         if 'default' in out and out['default']:
                             s = producer.send(out['default'], json.dumps(ret).encode())
-
 
 
