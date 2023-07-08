@@ -11,6 +11,7 @@ import time
 import traceback
 from contextlib import redirect_stdout
 import io
+import base64
 
 print("\n"*10)
 function = None
@@ -29,6 +30,14 @@ conn = pymongo.MongoClient(os.environ['MONGODB_HOST'], int(os.environ['MONGODB_P
 functions = conn.test.dfaas_functions
 function_applications = conn.test.dfaas_function_applications
 
+def convert_topic_names(topic_names):
+    a = []
+    for n in topic_names:
+        if n.startswith('dyntopic_'):
+            a.append(base64.b64decode(n.replace('dyntopic_','') + '==').decode())
+        else:
+            a.append(n)
+    return a
 
 def get_mappings(collection, fname):
     fn_app_lists = collection.find({ "fname": fname })
@@ -52,6 +61,7 @@ def setup_consumer(consumer, fname, mappings):
         consumer.close()
     if len(input_topic_names) == 0:
         return None
+    ablitterate = convert_topic_names(input_topic_names)
     print("reading from topics:", input_topic_names)
     consumer = kafka.KafkaConsumer(*input_topic_names, bootstrap_servers=[ os.environ['KAFKA_ADDRESS'] ])
     consumer.subscribe(input_topic_names)
@@ -125,7 +135,7 @@ while True:
             for out in topic['outputs']:
                 if 'default' in out and out['default']:
                     print('writing to topic:', out['default'])
-                    s = producer.send(out['default'], ret)
+                    producer.send(out['default'], ret)
 
     #elif :  # this is an input-only function
 
@@ -159,22 +169,45 @@ while True:
                     else:
                         f = io.StringIO()
                         with redirect_stdout(f):
-                            try:
-                                ret = function(rec, **application['params'])
-                            except Exception as e:
-                                print(traceback.format_exc())
+                            if inspect.isgeneratorfunction(function):
+                                gen = function(rec, **application['params'])
+                                finished = False
+                                while not finished:
+                                    try:
+                                        ret = next(gen)
+                                        # do not propogate return values if the value is just None
+                                        if ret is None:
+                                            continue
+                                        if not isinstance(ret, dict):
+                                            ret = { "value": ret }
+                    
+                                        for out in application['outputs']:
+                                            if 'default' in out and out['default']:
+                                                 producer.send(out['default'], json.dumps(ret).encode())
+
+                                    except StopIteration:
+                                        finished = True
+        
+                                    except Exception as e:
+                                        print(traceback.format_exc())
+                            else:
+
+                                try:
+                                    ret = function(rec, **application['params'])
+                                     # do not propogate return values if the value is just None
+                                    if ret is None:
+                                        continue
+                                    if not isinstance(ret, dict):
+                                        ret = { "value": ret }
+                
+                                    for out in application['outputs']:
+                                        if 'default' in out and out['default']:
+                                             producer.send(out['default'], json.dumps(ret).encode())
+    
+                                except Exception as e:
+                                    print(traceback.format_exc())
                         s = f.getvalue()
                         if log_stdout and len(s) > 0:
                             producer.send(f"{fname}_stdout", json.dumps({ "stdout": s, "tstamp": datetime.datetime.now().timestamp() }).encode())
-
-                    # do not propogate return values if the value is just None
-                    if ret is None:
-                        continue
-                    if not isinstance(ret, dict):
-                        ret = { "value": ret }
-
-                    for out in application['outputs']:
-                        if 'default' in out and out['default']:
-                            s = producer.send(out['default'], json.dumps(ret).encode())
-
-
+    
+    
