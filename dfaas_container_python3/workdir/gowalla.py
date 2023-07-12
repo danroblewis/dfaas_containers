@@ -24,6 +24,13 @@ def dfaas(fn):
         fname = fn.__name__
     return fn
 
+def debug(*args, **kwargs):
+  if os.environ.get('LOGLEVEL') == 'DEBUG':
+    print('DEBUG', args, kwargs)
+
+def info(*args, **kwargs):
+  if os.environ.get('LOGLEVEL') in ['DEBUG', 'INFO']:
+    print('INFO', args, kwargs)
 
 
 conn = pymongo.MongoClient(os.environ['MONGODB_HOST'], int(os.environ['MONGODB_PORT']), username=os.environ['MONGODB_USER'], password=os.environ['MONGODB_PASSWORD'])
@@ -71,7 +78,14 @@ def setup_consumer(consumer, fname, mappings):
 mappings = {}
 consumer = None
 
-producer = kafka.KafkaProducer(bootstrap_servers=[ os.environ['KAFKA_ADDRESS'] ])
+producer = None
+while producer is None:
+  try:
+    producer = kafka.KafkaProducer(bootstrap_servers=[ os.environ['KAFKA_ADDRESS'] ])
+  except kafka.errors.NoBrokersAvailable as e:
+    print("failed to boot")
+    print(traceback.format_exc())
+    time.sleep(5)
 
 refresh_interval = 10
 last_refresh = datetime.datetime(1970,1,1)
@@ -98,7 +112,14 @@ while True:
             code = fn['code']
             f = io.StringIO()
             with redirect_stdout(f):
-                exec(code)
+                try:
+                    exec(code)
+                except Exception as e:
+                    print(traceback.format_exc())
+                    s = f.getvalue()
+                    if log_stdout and len(s) > 0:
+                        producer.send(f"{fname}_stdout", json.dumps({ "stdout": s, "tstamp": datetime.datetime.now().timestamp() }).encode())
+                    continue
             s = f.getvalue()
             if log_stdout and len(s) > 0:
                 producer.send(f"{fname}_stdout", json.dumps({ "stdout": s, "tstamp": datetime.datetime.now().timestamp() }).encode())
@@ -106,6 +127,7 @@ while True:
 
     # TODO: not sure how to make this support paramaters. i think the functions need to be called async.
     if "null" in mappings: # this is an output-only function
+        debug('is output-only function')
         if inspect.isgeneratorfunction(function):
             f = io.StringIO()
             with redirect_stdout(f):
@@ -118,6 +140,7 @@ while True:
                 producer.send(f"{fname}_stdout", json.dumps({ "stdout": s, "tstamp": datetime.datetime.now().timestamp() }).encode())
         else:
             f = io.StringIO()
+            debug('is one shot function')
             with redirect_stdout(f):
                 try:
                     ret = function()
@@ -134,18 +157,19 @@ while True:
         for topic in topics:
             for out in topic['outputs']:
                 if 'default' in out and out['default']:
-                    print('writing to topic:', out['default'])
                     producer.send(out['default'], ret)
 
     #elif :  # this is an input-only function
 
     else: # this is good old fashion input-to-output function
+        debug('normal input-output function')
         if consumer is None:
             print("No topics found to read from. waiting.")
             time.sleep(20)
         else:
             r = consumer.poll(timeout_ms=100, max_records=201)
             for rr in sum(r.values(), []):
+                info(rr.value)
                 applications = mappings[rr.topic]
                 for application in applications:
                     t = rr.value.decode('utf-8')
@@ -153,9 +177,10 @@ while True:
                     try:
                         rec = json.loads(t)
                     except:
-                        print('failed to parse', t)
+                        print('failed to parse incoming message', t)
 
                     if fname == 'print_rec':
+                        debug('this is print_rec')
                         f = io.StringIO()
                         with redirect_stdout(f):
                             try:
@@ -167,12 +192,13 @@ while True:
                         if log_stdout and len(s) > 0:
                             producer.send(f"{fname}_stdout", json.dumps({ "stdout": s, "tstamp": datetime.datetime.now().timestamp() }).encode())
                     else:
-                        f = io.StringIO()
-                        with redirect_stdout(f):
-                            if inspect.isgeneratorfunction(function):
-                                gen = function(rec, **application['params'])
-                                finished = False
-                                while not finished:
+                        if inspect.isgeneratorfunction(function):
+                            debug('is generator')
+                            gen = function(rec, **application['params'])
+                            finished = False
+                            while not finished:
+                                f = io.StringIO()
+                                with redirect_stdout(f):
                                     try:
                                         ret = next(gen)
                                         # do not propogate return values if the value is just None
@@ -190,8 +216,13 @@ while True:
         
                                     except Exception as e:
                                         print(traceback.format_exc())
-                            else:
-
+                                s = f.getvalue()
+                                if log_stdout and len(s) > 0:
+                                    producer.send(f"{fname}_stdout", json.dumps({ "stdout": s, "tstamp": datetime.datetime.now().timestamp() }).encode())
+                        else:
+                            debug('is not generator')
+                            f = io.StringIO()
+                            with redirect_stdout(f):
                                 try:
                                     ret = function(rec, **application['params'])
                                      # do not propogate return values if the value is just None
@@ -206,8 +237,9 @@ while True:
     
                                 except Exception as e:
                                     print(traceback.format_exc())
-                        s = f.getvalue()
-                        if log_stdout and len(s) > 0:
-                            producer.send(f"{fname}_stdout", json.dumps({ "stdout": s, "tstamp": datetime.datetime.now().timestamp() }).encode())
-    
-    
+
+                            s = f.getvalue()
+                            if log_stdout and len(s) > 0:
+                                producer.send(f"{fname}_stdout", json.dumps({ "stdout": s, "tstamp": datetime.datetime.now().timestamp() }).encode())
+
+

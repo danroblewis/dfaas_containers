@@ -7,7 +7,16 @@ RUN pip3 install --no-cache --upgrade pip setuptools
 RUN pip3 install requests
 RUN pip3 install kafka-python
 RUN pip3 install pymongo
-
+RUN apk add libpq
+RUN apk add --no-cache --virtual .build-deps \
+    gcc \
+    python3-dev \
+    musl-dev \
+    postgresql-dev \
+    && pip install --no-cache-dir psycopg2 \
+    && apk del --no-cache .build-deps
+RUN pip3 install jq
+    
 RUN mkdir -p /home/app
 
 # Add non root user
